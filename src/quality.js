@@ -118,7 +118,22 @@ export const initQuality = () => {
   const params = new URLSearchParams(location.search)
   const forcedRung = params.has('rung') ? Math.min(3, Math.max(0, params.get('rung') | 0)) : null
   const fakeDpr = params.has('dpr') ? +params.get('dpr') || 0 : 0
-  const forceWebGL = params.has('webgl')
+  // iPhones and iPads run the WebGL2 backend BY DEFAULT. A real iPhone 12
+  // on iOS 26 initialised WebGPU, compiled the scene, and never presented
+  // a frame — while the same phone runs the WebGL2 path perfectly (and the
+  // simulator can't catch this: its "iPhone GPU" is the Mac's). WebKit's
+  // WebGPU stays opt-in via ?webgpu until it earns the default back.
+  // yz_backend is the recovery pin: any device whose WebGPU boot dies
+  // before the first frame gets reloaded onto WebGL2 once (see city.js).
+  const iosFamily =
+    /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  let pinnedGL = false
+  try {
+    pinnedGL = localStorage.getItem('yz_backend') === 'webgl'
+  } catch {}
+  const forceWebGL =
+    params.has('webgl') || pinnedGL || (iosFamily && !params.has('webgpu'))
   const native = () => fakeDpr || window.devicePixelRatio || 1
 
   const coarse = window.matchMedia('(pointer: coarse)').matches

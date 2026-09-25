@@ -103,6 +103,26 @@ export const initCity = async () => {
   // so even the first frame renders on the rung this device earned
   const quality = initQuality()
 
+  // The WebGPU insurance. A backend can initialise, compile, and still
+  // never present a frame (a real iPhone 12 did exactly that) — no error,
+  // no rejection, just a veil that never lifts. If a WebGPU boot has not
+  // reached scene-live inside the window, the page reloads ONCE pinned to
+  // the WebGL2 backend; the pin is remembered so the next visit skips the
+  // dead end entirely. A boot that was already on WebGL2 gets no retry —
+  // its failure is real and the failed overlay is the honest answer.
+  if (!quality.forceWebGL) {
+    setTimeout(() => {
+      if (document.documentElement.classList.contains('scene-live')) return
+      if (document.documentElement.classList.contains('scene-failed')) return
+      try {
+        if (sessionStorage.getItem('yz_gl_retry')) return // one recovery only
+        sessionStorage.setItem('yz_gl_retry', '1')
+        localStorage.setItem('yz_backend', 'webgl')
+      } catch {}
+      location.reload()
+    }, 45000)
+  }
+
   const renderer = new THREE.WebGPURenderer({
     canvas,
     antialias: true,
