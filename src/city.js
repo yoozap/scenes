@@ -184,7 +184,7 @@ export const initCity = async () => {
   // where a "phone variant" measured within 2% of the original and was
   // dropped. A phone that BENCHES strong opens rung 2+ and keeps the full
   // atlas: ultra stays ultra on mobiles that can hold it.
-  const phoneAssets = quality.rung() <= 1
+  const phoneAssets = quality.coarse && quality.rung() <= 1
   const TUNNEL_URL = phoneAssets ? '/models/tunnel-phone.glb' : '/models/tunnel.glb'
   const LOAD_BYTES = {
     [TUNNEL_URL]: phoneAssets ? 1586676 : 2942844,
@@ -2130,7 +2130,17 @@ export const initCity = async () => {
     wheelSize: fx.wheelSize,
     spin: fx.spin,
   })
-  postProcessing.outputNode = fxaa(renderOutput(streaked))
+  // Rung 0 gets the LITE chain: bloom stays — the tunnel's lights ARE the
+  // scene — but the speed streak, by far the biggest shader in the page,
+  // is never even built. On the software-GL and bottom-phone class that
+  // opens rung 0, compiling it alone held the main thread long enough
+  // for Android's not-responding dialog; the streak it bought was barely
+  // visible at dpr 1. The graph is chosen once at boot from the opening
+  // rung — no runtime swap, nothing recompiles mid-run.
+  postProcessing.outputNode =
+    quality.rung() === 0
+      ? fxaa(renderOutput(scenePass.add(bloomPass)))
+      : fxaa(renderOutput(streaked))
   postProcessing.outputColorTransform = false
   // debug handles for bisecting the chain per backend (see __city.post)
   const post = { postProcessing, scenePass, bloomPass, streaked, fxaa, renderOutput }

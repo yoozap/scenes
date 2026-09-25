@@ -144,7 +144,9 @@ export const initQuality = () => {
       if (m && m.shape === shape && Date.now() - m.t < MEM_TTL) remembered = m.rung
     } catch {}
     if (remembered !== null) {
-      rung = remembered
+      // the desktop floor applies to memories too — a remembered phone
+      // rung on a fine-pointer machine is a corrupt lesson, not a fact
+      rung = coarse ? remembered : Math.max(remembered, 2)
       why = 'remembered'
     } else {
       const ms = fillBench()
@@ -210,7 +212,12 @@ export const initQuality = () => {
     ema += (dt - ema) * 0.08
     const slow = ema > Math.max(0.022, refresh * 1.4)
     const clean = ema < refresh * 1.12
-    if (slow && rung > 0) {
+    // A fine-pointer machine never sinks below the page as written — a
+    // laptop's slow spell is a background tab, a screen capture or a
+    // thermal moment, and remembering it would trap the desktop on a
+    // phone rung (it happened: an occluded test window taught rung 0).
+    const floor = coarse ? 0 : 2
+    if (slow && rung > floor) {
       slowSince = slowSince || now
       cleanSince = 0
       if (now - slowSince > 1.4) {
@@ -244,6 +251,7 @@ export const initQuality = () => {
 
   return {
     forceWebGL,
+    coarse,
     frame,
     knobs: () => RUNGS[rung],
     rung: () => rung,
