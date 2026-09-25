@@ -145,6 +145,12 @@
       visibility: hidden;
     }
 
+    .loading__pct {
+      font-size: 12px;
+      opacity: 0.7;
+      font-variant-numeric: tabular-nums; /* the digits tick without jitter */
+    }
+
     .loading__bar {
       width: 140px;
       height: 2px;
@@ -208,6 +214,7 @@
   <div class="loading">
     <div class="loading__bar"></div>
     Loading scene
+    <span class="loading__pct">[0%]</span>
   </div>
 
   <div class="failed">

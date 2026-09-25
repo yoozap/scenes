@@ -173,12 +173,60 @@ export const initCity = async () => {
   // strip borrows so the surface matches across the junction. It used to come
   // out of city.glb, which is why 4.2 MB of unlit scenery sat on the hero's
   // critical path for a texture.
+  // The veil's [NN%] is real bytes, weighted across the four parallel
+  // fetches. Known sizes carry the weighting (a compressed transfer can
+  // hide content-length), and it parks at 99 for the decode + pipeline
+  // warm-up — a bar that hits 100 and then sits is a broken promise.
+  const pctEl = document.querySelector('.loading__pct')
+  // The scan is the one model whose weight is its TEXTURE: the 4096 atlas.
+  // On the rungs a weak phone opens on, the 2048/webp variant halves the
+  // download, the parse and the upload — the other models are geometry,
+  // where a "phone variant" measured within 2% of the original and was
+  // dropped. A phone that BENCHES strong opens rung 2+ and keeps the full
+  // atlas: ultra stays ultra on mobiles that can hold it.
+  const phoneAssets = quality.rung() <= 1
+  const TUNNEL_URL = phoneAssets ? '/models/tunnel-phone.glb' : '/models/tunnel.glb'
+  const LOAD_BYTES = {
+    [TUNNEL_URL]: phoneAssets ? 1586676 : 2942844,
+    '/models/tunnel-bore.glb': 216596,
+    '/models/taycan.glb': 1865848,
+    '/models/road.glb': 205736,
+  }
+  const loadProgress = {}
+  const trackLoad = (url) => (event) => {
+    loadProgress[url] = Math.min(event.loaded, LOAD_BYTES[url])
+    let loaded = 0
+    let total = 0
+    for (const [u, bytes] of Object.entries(LOAD_BYTES)) {
+      total += bytes
+      loaded += loadProgress[u] || 0
+    }
+    if (pctEl) pctEl.textContent = `[${Math.min(99, Math.round((loaded / total) * 100))}%]`
+  }
+  // init breadcrumbs on the veil itself: when a platform hangs between
+  // the download and the first frame, the stage that stuck says where —
+  // that is how the iOS Safari hang below was found at all
+  const stage = (label) => {
+    if (pctEl) pctEl.textContent = `[99%] ${label}`
+  }
+  window.addEventListener('error', (e) => stage(`ERR ${(e.message || '?').slice(0, 60)}`))
+  window.addEventListener('unhandledrejection', (e) => stage(`REJ ${String(e.reason).slice(0, 60)}`))
+  const parsePending = new Set(Object.keys(LOAD_BYTES))
+  const markParsed = (url) => (gltf) => {
+    parsePending.delete(url)
+    if (parsePending.size) {
+      stage(`parse ${[...parsePending].map((u) => u.split('/').pop().replace('.glb', '')).join(' ')}`)
+    }
+    return gltf
+  }
+  const loadModel = (url) => gltfLoader.loadAsync(url, trackLoad(url)).then(markParsed(url))
   const [tunnelGltf, boreGltf, taycanGltf, roadGltf] = await Promise.all([
-    gltfLoader.loadAsync('/models/tunnel.glb'),
-    gltfLoader.loadAsync('/models/tunnel-bore.glb'),
-    gltfLoader.loadAsync('/models/taycan.glb'),
-    gltfLoader.loadAsync('/models/road.glb'),
+    loadModel(TUNNEL_URL),
+    loadModel('/models/tunnel-bore.glb'),
+    loadModel('/models/taycan.glb'),
+    loadModel('/models/road.glb'),
   ])
+  stage('build')
 
   // This page is the tunnel run and nothing else — car, bore, road strip.
   // The 4.2 MB city scenery is never loaded: `city` stays null forever, and
@@ -1285,6 +1333,7 @@ export const initCity = async () => {
   const fxNdc = new THREE.Vector3()
   const fxPoint = new THREE.Vector3()
   const fxTravel = new THREE.Vector3()
+  const subjectNdc = new THREE.Vector3() // the framing guard's scratch
   // A rolling tyre's contact patch is stationary and its rim moves at twice
   // the car's speed; the rim itself travels exactly the car's speed around
   // the hub. At 300 km/h that is a fifth of a turn per exposure, so sharp
@@ -1884,11 +1933,29 @@ export const initCity = async () => {
     // offsets ease back toward the car by the same factor the lens widened.
     const aim = pose.aim
     const aimTighten = 1 / fovComp
-    camera.lookAt(
-      taycan.position.x + (aim ? aim[0] * aimTighten : 0),
-      taycan.position.y + (aim ? aim[1] : 0.72),
-      s.z + (aim ? aim[2] * aimTighten : 0),
-    )
+    const aimX = taycan.position.x + (aim ? aim[0] * aimTighten : 0)
+    const aimY = taycan.position.y + (aim ? aim[1] : 0.72)
+    const aimZ = s.z + (aim ? aim[2] * aimTighten : 0)
+    camera.lookAt(aimX, aimY, aimZ)
+    // The subject guard. Even tightened, some authored moves still walk
+    // the car to the edge of a portrait frame — measured, the hero run
+    // had it clean off an iPhone for 23% of its loop. Project the car's
+    // centre through the shot as framed; past the safe line the aim
+    // slides toward the car, exactly as an operator catches a subject
+    // drifting out of the finder. Wide frames never enter this branch.
+    if (wide > 1) {
+      camera.updateMatrixWorld()
+      subjectNdc.set(taycan.position.x, taycan.position.y + 0.7, s.z).project(camera)
+      const err = Math.abs(subjectNdc.x) - 0.55
+      if (err > 0 && subjectNdc.z < 1) {
+        const pull = Math.min(1, err / 0.45)
+        camera.lookAt(
+          aimX + (taycan.position.x - aimX) * pull,
+          aimY,
+          aimZ + (s.z - aimZ) * pull,
+        )
+      }
+    }
     // speed pumps the lens, smoothly; then the aspect compensation widens
     // it on the tan (never on raw degrees), capped shy of fisheye
     const vfov = s.fov + 8 * aero + 4 * s.boost
@@ -2297,7 +2364,9 @@ export const initCity = async () => {
   })
 
   // --- reveal: swap the static hero media for the live city ---
+  stage('warm')
   await renderer.renderAsync(scene, camera) // warm up pipelines before showing
+  stage('reveal')
   document.documentElement.classList.add('has-city')
   // TEMP scene-lab mode: hides the landing copy so only the header, the
   // camera bar and the 3D scene remain — delete this line to bring it back
