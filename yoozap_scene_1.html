@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Yoozap — Scene 1: Tunnel Run</title>
   <meta name="description" content="Porsche Taycan at a locked 300 km/h through a scanned railway tunnel. Three.js / WebGPU." />
   <style>
@@ -28,11 +28,14 @@
     }
 
     /* city.js measures #hero to drive its scroll fade. Here the scene IS the
-       page, so the hero is simply the viewport and the fade stays at 1. */
+       page, so the hero is simply the viewport and the fade stays at 1. It
+       paints ABOVE the fixed canvas, so it must let the pointer fall through
+       to the scene (drag orbit, zoom) — the camera bar re-enables its own. */
     #hero {
       position: relative;
       width: 100%;
       height: 100%;
+      pointer-events: none;
     }
 
     #city-canvas {
@@ -44,6 +47,7 @@
       z-index: 0;
       opacity: 0;
       transition: opacity 1.2s ease;
+      touch-action: none; /* fingers drive the scene, not Safari's scroll/zoom */
     }
 
     html.has-city #city-canvas { display: block; }
@@ -54,16 +58,11 @@
     .scenes {
       position: fixed;
       z-index: 2;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
+      top: 16px;
+      left: 16px;
       display: flex;
+      flex-wrap: wrap;
       gap: 6px;
-      padding: 6px;
-      border-radius: 14px;
-      background-color: rgba(12, 26, 34, 0.72);
-      border: 1px solid var(--divider);
-      backdrop-filter: blur(12px);
       opacity: 0;
       transition: opacity 0.6s ease 0.3s;
       pointer-events: none;
@@ -74,33 +73,29 @@
       pointer-events: auto;
     }
 
-    .scenes button {
+    .scenes a {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       height: 38px;
       padding: 0 14px;
-      border: 1px solid transparent;
-      border-radius: var(--radius);
       background: none;
-      font: inherit;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Cascadia Mono', monospace;
       font-size: 13px;
       font-weight: 600;
       line-height: 1;
       color: rgba(255, 255, 255, 0.72);
+      text-decoration: none;
       white-space: nowrap;
       cursor: pointer;
-      transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+      transition: color 0.2s ease;
     }
 
-    .scenes button:hover {
-      background-color: rgba(255, 255, 255, 0.07);
+    .scenes a:hover {
       color: #fff;
     }
 
-    .scenes button.is-active {
-      background-color: var(--primary-soft);
-      border-color: rgba(42, 157, 143, 0.55);
+    .scenes a.is-active {
       color: var(--primary);
     }
 
@@ -110,29 +105,12 @@
       opacity: 0.55;
     }
 
-    .scenes button:focus-visible {
+    .scenes a:focus-visible {
       outline: 2px solid rgba(42, 157, 143, 0.8);
       outline-offset: 2px;
     }
 
-    /* ---------- hint + loading ---------- */
-
-    .hint {
-      position: fixed;
-      z-index: 2;
-      left: 50%;
-      bottom: 18px;
-      transform: translateX(-50%);
-      margin: 0;
-      font-size: 12px;
-      letter-spacing: 0.02em;
-      color: rgba(255, 255, 255, 0.4);
-      opacity: 0;
-      transition: opacity 0.6s ease 0.6s;
-      pointer-events: none;
-    }
-
-    html.has-city .hint { opacity: 1; }
+    /* ---------- loading ---------- */
 
     .loading {
       position: fixed;
@@ -143,14 +121,18 @@
       gap: 14px;
       justify-items: center;
       background-color: var(--bg);
-      color: rgba(255, 255, 255, 0.55);
+      color: var(--primary);
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Cascadia Mono', monospace;
       font-size: 13px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      transition: opacity 0.6s ease, visibility 0s 0.6s;
+      transition: opacity 0.9s ease, visibility 0s 0.9s;
     }
 
-    html.has-city .loading {
+    /* scene-live, not has-city: the render loop adds it once frames actually
+       present, so the fade is seen instead of being eaten by the pipeline
+       compilation stall on the first frames */
+    html.scene-live .loading {
       opacity: 0;
       visibility: hidden;
     }
@@ -180,7 +162,7 @@
 
     @media (prefers-reduced-motion: reduce) {
       .loading__bar::after { animation: none; width: 100%; }
-      #city-canvas, .scenes, .hint { transition: none; }
+      #city-canvas, .scenes { transition: none; }
     }
 
     .failed {
@@ -207,14 +189,12 @@
 
   <div id="hero">
     <nav class="scenes" aria-label="Camera sequences">
-      <button type="button" data-scene="1" aria-pressed="false"><span class="scenes__num">01</span> Hero Run</button>
-      <button type="button" data-scene="2" aria-pressed="false"><span class="scenes__num">02</span> Pursuit</button>
-      <button type="button" data-scene="3" aria-pressed="false"><span class="scenes__num">03</span> Drift</button>
-      <button type="button" data-scene="4" aria-pressed="false"><span class="scenes__num">04</span> IMAX</button>
-      <button type="button" data-scene="5" aria-pressed="false"><span class="scenes__num">05</span> Snap Cuts</button>
+      <a href="#scene-1" data-scene="1" aria-pressed="false"><span class="scenes__num">01</span> Hero Run</a>
+      <a href="#scene-2" data-scene="2" aria-pressed="false"><span class="scenes__num">02</span> Pursuit</a>
+      <a href="#scene-3" data-scene="3" aria-pressed="false"><span class="scenes__num">03</span> Drift</a>
+      <a href="#scene-4" data-scene="4" aria-pressed="false"><span class="scenes__num">04</span> IMAX</a>
+      <a href="#scene-5" data-scene="5" aria-pressed="false"><span class="scenes__num">05</span> Snap Cuts</a>
     </nav>
-
-    <p class="hint">Drag to orbit &middot; scroll to zoom &middot; E to drive &middot; Esc to leave the tunnel</p>
   </div>
 
   <div class="loading">
@@ -224,7 +204,7 @@
 
   <div class="failed">
     <p>
-      This scene needs WebGPU or WebGL2 and a desktop GPU.<br />
+      This scene needs WebGPU or WebGL2.<br />
       Try the latest Chrome, Edge or Safari.
     </p>
   </div>

@@ -1,5 +1,21 @@
+import { copyFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
+
+// Each pod on usectl serves exactly ONE scene at its domain root, so the
+// scene's page is duplicated as index.html in the build output — the
+// canonical per-scene filename keeps working alongside it.
+function sceneAsIndex(page = 'yoozap_scene_1.html') {
+  return {
+    name: 'scene-as-index',
+    apply: 'build',
+    closeBundle: () =>
+      copyFile(
+        resolve(import.meta.dirname, 'dist', page),
+        resolve(import.meta.dirname, 'dist', 'index.html'),
+      ),
+  }
+}
 
 // three's DRACOLoader resolves its decoder at module scope with
 // `new URL('../libs/draco/…', import.meta.url).toString()` — five constants in
@@ -28,7 +44,7 @@ function dracoDecoderPath(base = '/draco/') {
 }
 
 export default defineConfig({
-  plugins: [dracoDecoderPath()],
+  plugins: [dracoDecoderPath(), sceneAsIndex()],
   build: {
     rollupOptions: {
       // The page is not index.html, so name it explicitly or vite finds nothing.

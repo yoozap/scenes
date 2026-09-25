@@ -8,6 +8,7 @@ import { color, mix, normalWorldGeometry, pass, renderOutput, smoothstep, unifor
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js'
 import { speedBlur } from './speedBlur.js'
+import { initQuality } from './quality.js'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
@@ -98,13 +99,18 @@ export const initCity = async () => {
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
+  // the governor prices the gpu (fill bench) before the renderer exists,
+  // so even the first frame renders on the rung this device earned
+  const quality = initQuality()
+
   const renderer = new THREE.WebGPURenderer({
     canvas,
     antialias: true,
     powerPreference: 'high-performance',
+    forceWebGL: quality.forceWebGL,
   })
   await renderer.init()
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(quality.dpr())
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.25
@@ -174,30 +180,12 @@ export const initCity = async () => {
     gltfLoader.loadAsync('/models/road.glb'),
   ])
 
-  // The city streams in behind the hero and attaches itself when it lands.
-  // Everything that touches it is guarded, because between first frame and
-  // arrival there is genuinely no city in the scene. A visitor only ever
-  // reaches it by pressing Escape or calling __city.flyTo(), and both wait
-  // on cityReady.
-  let city = null
-  const cityReady = gltfLoader
-    .loadAsync('/models/city.glb')
-    .then((gltf) => {
-      city = gltf.scene
-      scene.add(city)
-      sharpenTextures(city)
-      applyCityFraming() // fog density and the establishing rig's aim
-      refreshOverview() // the resting camera is framed on the city's bounds
-      dracoLoader.dispose()
-      return city
-    })
-    .catch((error) => {
-      // The hero does not depend on this, so a failure here must not take
-      // the scene down — it just means the establishing views stay empty.
-      console.warn('[city] scenery failed to load:', error)
-      dracoLoader.dispose()
-      return null
-    })
+  // This page is the tunnel run and nothing else — car, bore, road strip.
+  // The 4.2 MB city scenery is never loaded: `city` stays null forever, and
+  // every path that would reveal it (Escape, the view flights, the
+  // clean-click view hop) is gated on it below, so the run is the only mode.
+  const city = null
+  dracoLoader.dispose() // every draco model this page uses is already in
 
   // Braithwaite Street Tunnel, parked at the south end of the view-1
   // boulevard, arch facing north so that road runs straight into the
@@ -371,11 +359,8 @@ export const initCity = async () => {
   sharpenTextures(tunnel)
 
   // --- framing from the model bounds ---
-  // These describe the CITY, which arrives late, so they start from its
-  // measured extents and are recomputed from the real object when it lands.
-  // Nothing on screen depends on them before that: scene 1 is inside a closed
-  // bore with the establishing rig switched off, so neither the fog density
-  // nor the sun's aim is visible until the city is there to be lit.
+  // Measured off city.glb back when the scenery shipped; they still set the
+  // fog, the orbit limits and the resting overview's scale, so they stay.
   const center = new THREE.Vector3(-6.8, 0, 374.4) // measured off city.glb
   let r = 512 // half the bounding box's space diagonal
 
@@ -388,16 +373,9 @@ export const initCity = async () => {
   const rim = new THREE.DirectionalLight(0x2a9d8f, 0.5)
   scene.add(rim)
 
-  // Aim the establishing rig and set the fog to the city's real size. Called
-  // once with the measured constants above so the first frame is valid, and
-  // again from cityReady with the loaded object's own bounds.
+  // Aim the establishing rig from the measured constants above. The city
+  // never loads on this page, so the bounds are never recomputed.
   function applyCityFraming() {
-    if (city) {
-      const box = new THREE.Box3().setFromObject(city)
-      box.getCenter(center)
-      r = box.getBoundingSphere(new THREE.Sphere()).radius
-      scene.fog.density = 1.35 / (r * 6)
-    }
     sun.position.set(center.x + r, center.y + r * 1.3, center.z + r * 0.4)
     sun.target.position.copy(center)
     rim.position.set(center.x - r, center.y + r * 0.5, center.z - r)
@@ -456,7 +434,7 @@ export const initCity = async () => {
     // low-frequency data on a moving car, so refreshing it on alternate
     // frames hands half of that back for no visible change.
     probeFrame += 1
-    if (probeFrame % 2 === 0) return
+    if (probeFrame % quality.knobs().probeEvery !== 0) return
     probeCamera.position.set(taycan.position.x, taycan.position.y + 0.8, taycan.position.z)
     taycan.visible = false
     // inside the bore the city is six faces of scenery you cannot see out
@@ -478,6 +456,10 @@ export const initCity = async () => {
   taycan.position.set(-1.75, 0.06, 84)
   taycan.rotation.y = Math.PI
   taycan.traverse((node) => {
+    // the 'swatch' mesh is nothing but the white PORSCHE / WEISSACH
+    // lettering on the rear wing's endplates — hide it and the wing is
+    // plain carbon, no other mesh shares the material
+    if (node.isMesh && node.material?.name === 'porscheswatch') node.visible = false
     if (node.isMesh && node.material?.name === 'PaletteMaterial002') {
       const paint = node.material
       paint.map = null
@@ -955,33 +937,30 @@ export const initCity = async () => {
     polygonOffsetUnits: -4,
   })
 
-  // Real tarmac is never a mathematical plane — it settles in long waves
-  // and carries a crossfall that wanders along the bore. This profile IS
-  // the suspension's input: the wheels follow it and the body answers
-  // through the springs, which is what makes the damping visible without
-  // a single frame of faked motion. Amplitudes are road-realistic (~2 cm
-  // all in), too subtle to see as a shape but plainly felt in the body.
+  // Top-grade RACE asphalt: a circuit surface is laid to a few
+  // millimetres of tolerance, so the profile is nearly a plane — just
+  // enough life to stop the car reading as bolted to a table. This
+  // profile IS the suspension's input: the wheels follow it and the
+  // body answers through the springs (~4 mm all in).
   // Every wavelength divides one TUNNEL_PERIOD, so the profile is exactly
   // periodic and the tiled copies meet with no step at the seams.
   const ROAD_LEVEL = -0.14
   const ROAD_W = (2 * Math.PI) / TUNNEL_PERIOD
   const roadProfile = (x, z) =>
     ROAD_LEVEL +
-    // Keep this one small. At 1.2 Hz it lands right on the body's own
-    // frequency, so whatever amplitude it has gets AMPLIFIED into body
-    // heave — it is the wave you feel as the car bouncing.
-    Math.sin(z * ROAD_W) * 0.003 + // long settlement wave (~1.2 Hz at speed)
-    Math.sin(z * ROAD_W * 2 + 1.7) * 0.003 + // shorter undulation
-    // The wheels' working band. At 300 km/h these arrive at 3.5 and 5.8 Hz
-    // — above the body's 1.5 Hz, so the springs soak up most of them: the
-    // WHEELS and their uprights (disc + calipers) visibly rise and fall in
-    // the arches while the body still glides. Keep these harmonics low;
-    // anything shorter turns the whole car into a buzz.
-    Math.sin(z * ROAD_W * 3 + 0.6) * 0.011 + // rolling swells (~3.5 Hz)
-    Math.sin(z * ROAD_W * 5 + 2.1) * 0.006 + // patch-to-patch steps (~5.8 Hz)
-    // crossfall that drifts along the bore, so the left and right wheels
-    // sit at slightly different heights and the body rolls a little
-    Math.sin(z * ROAD_W * 2 + 0.9) * x * 0.004
+    // Keep these two tiny. At 1.2 Hz the first lands right on the body's
+    // own frequency, so whatever amplitude it has gets AMPLIFIED into
+    // body heave — it is the wave you feel as the car bouncing.
+    Math.sin(z * ROAD_W) * 0.001 + // long settlement wave (~1.2 Hz at speed)
+    Math.sin(z * ROAD_W * 2 + 1.7) * 0.001 + // shorter undulation
+    // The wheels' working band, held to race-surface millimetres: the
+    // wheels and their uprights (disc + calipers) tremble with the
+    // texture of the tarmac, and nothing ever pumps.
+    Math.sin(z * ROAD_W * 3 + 0.6) * 0.0015 + // rolling swells (~3.5 Hz)
+    Math.sin(z * ROAD_W * 5 + 2.1) * 0.001 + // patch-to-patch steps (~5.8 Hz)
+    // gentle circuit camber drifting along the bore — left and right
+    // wheels sit a touch apart, the body leans a hair, nothing rocks
+    Math.sin(z * ROAD_W * 2 + 0.9) * x * 0.002
 
   // strip along x ({x0, x1, z}) or along z ({z0, z1, x}), plus width
   const buildRoadGeometry = (opts) => {
@@ -1433,8 +1412,10 @@ export const initCity = async () => {
     fx.cap.value = focusDist * (19 - 15 * boost)
     measureWheels(reach, travel)
     // taps scale with the travel: a long smear needs more of them to stay
-    // smooth, a short one would only waste them
-    fx.samples.value = reach > 0.02 ? Math.min(40, Math.round(10 + reach * 18)) : 0
+    // smooth, a short one would only waste them. The governor's cap trades
+    // streak grain for frame time on the rungs that need it.
+    fx.samples.value =
+      reach > 0.02 ? Math.min(quality.knobs().samplesCap, Math.round(10 + reach * 18)) : 0
     if (focus) {
       measureSubject()
       fxNdc.copy(focus).project(camera)
@@ -1788,19 +1769,18 @@ export const initCity = async () => {
     // barely leans — faking a bigger lean reads as rocking, not grip.
     const targetRoll = Math.atan2((fl + rl - fr - rr) / 2, 1.7) + latAccel * 0.0006
 
-    // Magic-carpet rates: ~0.65 Hz heave (ζ ≈ 0.45), ~0.85 Hz pitch/roll
-    // (ζ ≈ 0.5). Softening the spring is what buys the plush ride: the
-    // further the road's frequency sits above the body's, the less of it
-    // gets through, so at 3.5 Hz only about a sixth of the road reaches
-    // the body. The WHEELS still take the full surface — that is the
-    // point, and what you see working in the arches. Damping stays
-    // modest for the same reason: over-damping bolts the body back to
-    // the road. Still symmetric — an ASYMMETRIC damper ratchets against
-    // a moving target and reads as bouncing however soft the springs are.
+    // Race-game rates: ~0.65 Hz heave, ~0.85 Hz pitch/roll, both damped
+    // to ζ ≈ 0.8 — near-critical, the NFS look. The soft spring still
+    // filters the road (at 3.5 Hz only about a sixth of it reaches the
+    // body), but the firm damper means whatever does get through settles
+    // in ONE motion and never rings — the body sits planted and any
+    // after-bounce is gone. Still symmetric — an ASYMMETRIC damper
+    // ratchets against a moving target and reads as bouncing however
+    // soft the springs are.
     const KH = 16.7
-    const CH = 3.67
+    const CH = 6.5
     const KA = 28.5
-    const CA = 5.34
+    const CA = 8.5
     const steps = Math.max(1, Math.ceil(dt / 0.02))
     const h = dt / steps
     for (let step = 0; step < steps; step += 1) {
@@ -1862,11 +1842,23 @@ export const initCity = async () => {
 
     // Run the edit: advance through the 8 s loop, take the cut we are in,
     // and let the drag/zoom offsets nudge it without overwriting it.
-    s.movieT = (s.movieT + dt) % MOVIE_LOOP
+    // While any finger or button is down the edit clock freezes — the shot
+    // keeps tracking the car but stops cutting, and resumes on release.
+    if (!sceneDrag && scenePointers.size === 0) s.movieT = (s.movieT + dt) % MOVIE_LOOP
     const pose = moviePose(MOVIES[s.movie], s.movieT)
+    // The five edits are framed for a cinema-wide window; a portrait phone
+    // shows barely a third of that width, and the same numbers crop the
+    // car to a door handle. Rather than re-author every cut per device the
+    // rig adapts: the lens widens toward the authored horizontal reach
+    // (square-root law — full compensation fisheyes a tall phone) and the
+    // dolly eases back the rest, inside the bore's own wall clamps. On
+    // anything 16:9 or wider both factors are exactly 1.
+    const wide = Math.max(1, 16 / 9 / camera.aspect)
+    const fovComp = Math.sqrt(wide)
+    const distComp = Math.min(1.35, Math.pow(wide, 0.25))
     s.az = pose.az + s.azOff
     s.el = Math.min(1.25, Math.max(0.03, pose.el + s.elOff))
-    s.dist = Math.min(16, Math.max(2.2, pose.dist * s.distScale))
+    s.dist = Math.min(16, Math.max(2.2, pose.dist * s.distScale * distComp))
     s.fov = pose.fov
 
     // the rig sits on an orbit around the car, clamped to the bore walls
@@ -1894,7 +1886,13 @@ export const initCity = async () => {
       taycan.position.y + (aim ? aim[1] : 0.72),
       s.z + (aim ? aim[2] : 0),
     )
-    camera.fov = s.fov + 8 * aero + 4 * s.boost // speed pumps the lens, smoothly
+    // speed pumps the lens, smoothly; then the aspect compensation widens
+    // it on the tan (never on raw degrees), capped shy of fisheye
+    const vfov = s.fov + 8 * aero + 4 * s.boost
+    camera.fov = Math.min(
+      92,
+      (360 / Math.PI) * Math.atan(Math.tan((vfov * Math.PI) / 360) * fovComp),
+    )
     camera.updateProjectionMatrix()
 
     // The car is what the shot tracks, so it stays sharp while the bore
@@ -1917,7 +1915,8 @@ export const initCity = async () => {
     })
   }
   sceneButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault() // the links are in-page controls, not navigation
       const index = Number(btn.dataset.scene) - 1
       if (!Number.isInteger(index) || index < 0 || index >= MOVIES.length) return
       playScene1(index)
@@ -1925,28 +1924,76 @@ export const initCity = async () => {
     })
   })
   window.addEventListener('keydown', (event) => {
-    // Same reason as flyTo: leaving the bore reveals the city, so wait for it.
-    if (event.code === 'Escape' && scene1) cityReady.then(() => endScene1())
+    // Exiting the run would reveal the city, and this page has none — the
+    // tunnel run is the whole show, so Escape stays dormant.
+    if (event.code === 'Escape' && scene1 && city) endScene1()
   })
 
   // drag orbits around the car during the scene (a clean click still exits
-  // through the view-hop handler); ctrl+scroll adjusts the orbit distance
+  // through the view-hop handler); ctrl+scroll adjusts the orbit distance.
+  // Touch rides the same pointer events: one finger drags the orbit, two
+  // fingers pinch the distance through the same knob ctrl+scroll turns —
+  // and any finger down holds the edit exactly like a mouse drag.
   let sceneDrag = null
+  const scenePointers = new Map()
+  let pinchDist = 0
   canvas.addEventListener('pointerdown', (event) => {
-    if (scene1) sceneDrag = { x: event.clientX, y: event.clientY }
+    if (!scene1) return
+    scenePointers.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (scenePointers.size === 2) {
+      const [a, b] = [...scenePointers.values()]
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y)
+      sceneDrag = null // two fingers zoom; neither steers the orbit
+    } else {
+      sceneDrag = { x: event.clientX, y: event.clientY }
+    }
+    gsap.killTweensOf(scene1) // the viewer has the rig — stop any recentre still easing back
   })
   window.addEventListener('pointermove', (event) => {
-    if (!scene1 || !sceneDrag) return
-    // nudge the edit rather than overwrite it: the movie keeps cutting,
-    // the viewer just leans the rig a little off the operator's framing
+    if (!scene1) return
+    const p = scenePointers.get(event.pointerId)
+    if (p) {
+      p.x = event.clientX
+      p.y = event.clientY
+    }
+    if (scenePointers.size === 2) {
+      const [a, b] = [...scenePointers.values()]
+      const d = Math.hypot(a.x - b.x, a.y - b.y)
+      // scales whatever the edit asked for, same knob as ctrl+scroll
+      if (pinchDist > 0 && d > 0) {
+        scene1.distScale = Math.min(2.2, Math.max(0.6, scene1.distScale * (pinchDist / d)))
+      }
+      pinchDist = d
+      return
+    }
+    if (!sceneDrag) return
+    // while the hold is on the edit clock is frozen (see updateScene1),
+    // so these offsets are the only thing moving the rig
     scene1.azOff -= (event.clientX - sceneDrag.x) * 0.006
     scene1.elOff = Math.min(0.9, Math.max(-0.9, scene1.elOff + (event.clientY - sceneDrag.y) * 0.004))
     sceneDrag.x = event.clientX
     sceneDrag.y = event.clientY
   })
-  window.addEventListener('pointerup', () => {
+  const dropScenePointer = (event) => {
+    if (!scenePointers.delete(event.pointerId)) return
+    pinchDist = 0
+    if (scenePointers.size === 1) {
+      // the finger that stays becomes a plain drag, no lift-and-retouch
+      const [rest] = scenePointers.values()
+      sceneDrag = { x: rest.x, y: rest.y }
+      return
+    }
     sceneDrag = null
-  })
+    if (!scene1) return
+    // hand the rig back: the clock unfreezes, and the viewer's lean eases
+    // out so the movie returns to its authored framing. Wrap az first so a
+    // multi-turn drag unwinds the short way, not back through every turn.
+    const TAU = Math.PI * 2
+    scene1.azOff = ((scene1.azOff % TAU) + TAU + Math.PI) % TAU - Math.PI
+    gsap.to(scene1, { azOff: 0, elOff: 0, duration: 1.4, ease: 'power2.inOut', overwrite: 'auto' })
+  }
+  window.addEventListener('pointerup', dropScenePointer)
+  window.addEventListener('pointercancel', dropScenePointer)
 
   // pinch on a trackpad arrives as a ctrlKey wheel event, so the same branch
   // serves ctrl+scroll on a mouse; a plain wheel keeps scrolling the page
@@ -2020,14 +2067,29 @@ export const initCity = async () => {
   const clock = new THREE.Clock()
   let running = false
   let lastTime = 0
+  let presentedFrames = 0
   const flyForward = new THREE.Vector3()
   const flyRight = new THREE.Vector3()
   const flyMove = new THREE.Vector3()
 
   const tick = () => {
     const t = clock.getElapsedTime()
-    const dt = Math.min(t - lastTime, 0.1)
+    const rawDt = t - lastTime // the watchdog wants the truth, not the clamp
+    const dt = Math.min(rawDt, 0.1)
     lastTime = t
+
+    // The loading veil fades on scene-live, not has-city: the first frames
+    // stall on pipeline compilation, and a fade started before them is
+    // swallowed whole — it must begin only once frames actually present.
+    presentedFrames += 1
+    if (presentedFrames === 2) document.documentElement.classList.add('scene-live')
+
+    // the governor watches the measured frame cost; a rung change means a
+    // new canvas resolution, so the targets reallocate here and nowhere else
+    if (quality.frame(rawDt, t)) {
+      renderer.setPixelRatio(quality.dpr())
+      renderer.setSize(window.innerWidth, window.innerHeight)
+    }
 
     if (scene1) {
       updateScene1(dt)
@@ -2183,7 +2245,7 @@ export const initCity = async () => {
   document.addEventListener('visibilitychange', updateScrollFade)
 
   window.addEventListener('resize', () => {
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(quality.dpr())
     renderer.setSize(window.innerWidth, window.innerHeight)
     camera.aspect = window.innerWidth / window.innerHeight
     camera.updateProjectionMatrix()
@@ -2194,12 +2256,9 @@ export const initCity = async () => {
   const flyTo = (name) => {
     const preset = presets[name]
     if (!preset) return
-    // The establishing views ARE the city. If it has not landed yet, hold the
-    // flight rather than pan across an empty void, and run it on arrival.
-    if (!city) {
-      cityReady.then(() => flyTo(name))
-      return
-    }
+    // The establishing views ARE the city, and this page never loads it, so
+    // the flights — and the clean-click view hop — are permanently off.
+    if (!city) return
     setDrive(false)
     endScene1(false) // the flight below takes the camera from here
     activeView = name
@@ -2246,12 +2305,11 @@ export const initCity = async () => {
     updateScrollFade()
   }, 1300)
 
-  // Scene 1 plays by default — the hero opens on the tunnel run
-  // (ESC, a click on the city, or any view button hands control back)
-  if (!reducedMotion) {
-    playScene1(0)
-    markActiveScene(0)
-  }
+  // Scene 1 plays by default and IS the page: with no city to exit to,
+  // the resting overview frames nothing, so the run starts for everyone
+  // (reduced-motion visitors included — the alternative is an empty frame).
+  playScene1(0)
+  markActiveScene(0)
 
   // demo handle: lets the console (or a demo script) drive the scene
   window.__city = {
@@ -2275,6 +2333,7 @@ export const initCity = async () => {
     movies: MOVIES,
     wheelGroups,
     rideHeight,
+    quality,
     // No THREE here. Re-exporting the namespace to a global pins every export
     // of three/webgpu as live and blocks tree-shaking entirely: that one key
     // cost 171 kB raw / 38 kB brotli in the city chunk. The classes are still
