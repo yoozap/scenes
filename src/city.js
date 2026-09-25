@@ -893,10 +893,13 @@ export const initCity = async () => {
 
     // The tail lamps' glow on the tarmac behind. Carried here rather than
     // on the car, and set back past the rear bumper with a short reach,
-    // so it lands on the road without flooding the rear wheel red.
+    // so it lands on the road without flooding the rear wheel red. The
+    // bumper sits ~1.0 u ahead of these emitters: any reach past that
+    // shines through the tail and prints red dots on the fascia above
+    // and below the light bar, so the reach must stay under it.
     for (const dx of [-0.62, 0.62]) {
-      const tailPool = new THREE.PointLight(TAILLAMP_RED, 4, 1.3, 2)
-      tailPool.position.set(dx, 0.16, -3.0)
+      const tailPool = new THREE.PointLight(TAILLAMP_RED, 4, 0.9, 2)
+      tailPool.position.set(dx, 0.16, -3.5)
       groundFx.add(tailPool)
     }
   }
