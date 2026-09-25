@@ -4,16 +4,26 @@ import { defineConfig } from 'vite'
 
 // Each pod on usectl serves exactly ONE scene at its domain root, so the
 // scene's page is duplicated as index.html in the build output — the
-// canonical per-scene filename keeps working alongside it.
+// canonical per-scene filename keeps working alongside it. The dev server
+// mirrors that: bare `/` rewrites to the scene, so localhost behaves like
+// the deployed pod instead of 404ing at the root.
 function sceneAsIndex(page = 'yoozap_scene_1.html') {
   return {
     name: 'scene-as-index',
-    apply: 'build',
     closeBundle: () =>
       copyFile(
         resolve(import.meta.dirname, 'dist', page),
         resolve(import.meta.dirname, 'dist', 'index.html'),
-      ),
+        // no dist in a dev-server shutdown — only the build cares
+      ).catch(() => {}),
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url === '/' || req.url.startsWith('/?')) {
+          req.url = `/${page}${req.url.slice(1)}`
+        }
+        next()
+      })
+    },
   }
 }
 
