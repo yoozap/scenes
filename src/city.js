@@ -1879,12 +1879,15 @@ export const initCity = async () => {
     )
     // A cut may aim somewhere other than the middle of the car — that is
     // what makes an insert shot an insert shot. Offsets are in car terms:
-    // [across, up from the road, along (+ = nose)].
+    // [across, up from the road, along (+ = nose)]. On a narrow frame an
+    // off-axis aim walks the subject out of the picture entirely, so the
+    // offsets ease back toward the car by the same factor the lens widened.
     const aim = pose.aim
+    const aimTighten = 1 / fovComp
     camera.lookAt(
-      taycan.position.x + (aim ? aim[0] : 0),
+      taycan.position.x + (aim ? aim[0] * aimTighten : 0),
       taycan.position.y + (aim ? aim[1] : 0.72),
-      s.z + (aim ? aim[2] : 0),
+      s.z + (aim ? aim[2] * aimTighten : 0),
     )
     // speed pumps the lens, smoothly; then the aspect compensation widens
     // it on the tan (never on raw degrees), capped shy of fisheye
@@ -2062,6 +2065,8 @@ export const initCity = async () => {
   })
   postProcessing.outputNode = fxaa(renderOutput(streaked))
   postProcessing.outputColorTransform = false
+  // debug handles for bisecting the chain per backend (see __city.post)
+  const post = { postProcessing, scenePass, bloomPass, streaked, fxaa, renderOutput }
 
   // --- render loop, paused when the tab or the city is not visible ---
   const clock = new THREE.Clock()
@@ -2334,6 +2339,7 @@ export const initCity = async () => {
     wheelGroups,
     rideHeight,
     quality,
+    post,
     // No THREE here. Re-exporting the namespace to a global pins every export
     // of three/webgpu as live and blocks tree-shaking entirely: that one key
     // cost 171 kB raw / 38 kB brotli in the city chunk. The classes are still

@@ -15,6 +15,17 @@ from the bar at the top.
   the city. `window.__city` exposes live handles for the console.
 - Renders through `WebGPURenderer` (auto-falls back to WebGL2) with ACES tone
   mapping and a TSL bloom + FXAA + speed-blur post chain.
+- **Every device gets its best picture** (`src/quality.js`): a fill bench at
+  boot prices the gpu and opens on the rung it earned — dpr, reflection-probe
+  cadence and blur taps per rung, with rung 3 (ultra) giving strong panels
+  their full device ratio under a ~3.2M-pixel budget. A live watchdog demotes
+  on measured frame cost (and climbs back once, carefully); the settled rung
+  is remembered per device shape for a week. Dev knobs: `?rung=N` pins a
+  rung, `?dpr=X` fakes a panel ratio, `?webgl` forces the WebGL2 backend.
+- Touch is first-class: one finger orbits, two fingers pinch-zoom, any hold
+  pauses the edit. The five camera edits adapt to narrow frames — the lens
+  widens toward the authored horizontal reach and off-axis aims recentre, so
+  a portrait phone sees the shot, not a crop of it.
 
 ### How it is put together
 
