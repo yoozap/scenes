@@ -110,6 +110,14 @@
       outline-offset: 2px;
     }
 
+    /* phones: the bar tightens — smaller type, closer links — so all five
+       edits sit in one quiet row over the scene */
+    @media (max-width: 640px) {
+      .scenes { top: 10px; left: 10px; gap: 0; }
+      .scenes a { height: 30px; padding: 0 8px; gap: 5px; font-size: 11px; }
+      .scenes__num { font-size: 9px; }
+    }
+
     /* ---------- loading ---------- */
 
     .loading {
@@ -125,7 +133,7 @@
       font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Cascadia Mono', monospace;
       font-size: 13px;
       letter-spacing: 0.08em;
-      text-transform: uppercase;
+      text-transform: lowercase;
       transition: opacity 0.9s ease, visibility 0s 0.9s;
     }
 
