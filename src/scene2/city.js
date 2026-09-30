@@ -661,6 +661,11 @@ export const initCity = async () => {
     // needed its colour classified out of the geometry, which this one makes
     // pointless and would in fact overwrite.
     sharpenTextures(charger)
+    // HIDDEN FOR NOW. The model still loads and is still placed — the 274 kB
+    // is not worth a second code path, and the anchor/yaw measurements below
+    // are the expensive part to re-derive — it simply does not draw. Flip
+    // this to true, or set __charger.visible from the console, to get it back.
+    chargerRig.visible = false
     window.__charger = chargerRig // live handle: nudge it from the console
   }
 
@@ -3966,8 +3971,19 @@ export const initCity = async () => {
     const car = taycan.position
     const yaw = taycan.rotation.y
     const t = sh.t || 0
+    // THE SHOTS ARE AUTHORED FOR A CINEMA-WIDE WINDOW, and a portrait phone
+    // shows barely a third of that width — the same numbers crop the car to a
+    // door handle, and the 26 degree wheel close-up loses the wheel. Scene 1
+    // solved this rather than re-authoring every cut per device, and the same
+    // two factors apply here: the lens widens toward the authored HORIZONTAL
+    // reach on a square-root law (full compensation fisheyes a tall screen)
+    // and the dolly eases back the rest. On 16:9 or wider both are exactly 1,
+    // so nothing about the desktop framing moves.
+    const wide = Math.max(1, 16 / 9 / camera.aspect)
+    const fovComp = Math.sqrt(wide)
+    const distComp = Math.min(1.35, Math.pow(wide, 0.25))
     // the shot's own move, over its own band
-    const dist = sh.dist === undefined ? 0 : sh.dist * (sh.push ? showLerp(sh.push[0], sh.push[1], showEase(t)) : 1)
+    const dist = (sh.dist === undefined ? 0 : sh.dist * (sh.push ? showLerp(sh.push[0], sh.push[1], showEase(t)) : 1)) * distComp
     const az = (sh.az || 0) + (sh.arc ? showLerp(sh.arc[0], sh.arc[1], showEase(t)) : 0)
     const aim = sh.aim || [0, 0.8, 0]
     if (sh.kind === 'plate') {
@@ -3997,7 +4013,7 @@ export const initCity = async () => {
       cityDir.multiplyScalar(1 / len)
       cityRight.crossVectors(cityDir, CITY_UP).normalize()
       cityUpv.crossVectors(cityRight, cityDir).normalize()
-      const halfH = Math.tan((sh.fov * Math.PI) / 360) * len
+      const halfH = Math.tan((camera.fov * Math.PI) / 360) * len
       cityAim.addScaledVector(cityRight, sh.frame[0] * halfH * camera.aspect)
       cityAim.addScaledVector(cityUpv, sh.frame[1] * halfH)
     }
@@ -4071,8 +4087,13 @@ export const initCity = async () => {
     if (cityEye.y < 0.28) cityEye.y = 0.28 // the pull-back can only lower it
     camera.position.copy(cityEye)
     camera.lookAt(cityAim)
-    if (camera.fov !== sh.fov) {
-      camera.fov = sh.fov
+    // widened on the tan, never on raw degrees, and capped shy of fisheye
+    const wantFov = Math.min(
+      92,
+      (360 / Math.PI) * Math.atan(Math.tan((sh.fov * Math.PI) / 360) * fovComp),
+    )
+    if (Math.abs(camera.fov - wantFov) > 0.01) {
+      camera.fov = wantFov
       camera.updateProjectionMatrix()
     }
   }
