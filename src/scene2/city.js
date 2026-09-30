@@ -227,9 +227,21 @@ export const initCity = async () => {
   // On the rungs a weak phone opens on, the 2048/webp variant halves the
   // download, the parse and the upload — the other models are geometry,
   // where a "phone variant" measured within 2% of the original and was
-  // dropped. A phone that BENCHES strong opens rung 2+ and keeps the full
-  // atlas: ultra stays ultra on mobiles that can hold it.
-  const phoneAssets = quality.coarse && quality.rung() <= 1
+  // dropped.
+  //
+  // ...and the gate is the DEVICE, not the benchmark. This used to read
+  // `coarse && rung <= 1`, so a phone that benched strong opened rung 2 and
+  // pulled the full 2.9 MB atlas — which confuses two different budgets. The
+  // rung measures what the GPU can DRAW; the download is bounded by the
+  // NETWORK, and a flagship on a cell link gains nothing from the 4096 atlas
+  // except 1.3 MB of waiting. Ultra still stays ultra where it shows: the
+  // rung keeps its own say over dpr, the probe and the blur taps.
+  //
+  // min-DIMENSION rather than innerWidth is deliberate: a tablet in portrait
+  // and the same tablet in landscape must resolve to the SAME asset set, or
+  // turning the device mid-load downloads both.
+  const smallScreen = Math.min(screen.width || 9999, screen.height || 9999) <= 1024
+  const phoneAssets = quality.coarse && smallScreen
   const TUNNEL_URL = phoneAssets ? '/models/tunnel-phone.glb' : '/models/tunnel.glb'
   const LOAD_BYTES = {
     [TUNNEL_URL]: phoneAssets ? 1586676 : 2942844,
@@ -242,7 +254,7 @@ export const initCity = async () => {
     // 4.4 MB is a third of the wait, and a bar that ignored it would sit at
     // 100% doing nothing.
     '/models/city.glb': 4359016,
-    '/models/ev-charger.glb': 2291640,
+    '/models/ev-charger.glb': 280112,
   }
   const loadProgress = {}
   const trackLoad = (url) => (event) => {
