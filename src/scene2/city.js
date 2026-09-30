@@ -128,25 +128,8 @@ export const initCity = async () => {
   // so even the first frame renders on the rung this device earned
   const quality = initQuality()
 
-  // The WebGPU insurance. A backend can initialise, compile, and still
-  // never present a frame (a real iPhone 12 did exactly that) — no error,
-  // no rejection, just a veil that never lifts. If a WebGPU boot has not
-  // reached scene-live inside the window, the page reloads ONCE pinned to
-  // the WebGL2 backend; the pin is remembered so the next visit skips the
-  // dead end entirely. A boot that was already on WebGL2 gets no retry —
-  // its failure is real and the failed overlay is the honest answer.
-  if (!quality.forceWebGL) {
-    setTimeout(() => {
-      if (document.documentElement.classList.contains('scene-live')) return
-      if (document.documentElement.classList.contains('scene-failed')) return
-      try {
-        if (sessionStorage.getItem('yz_gl_retry')) return // one recovery only
-        sessionStorage.setItem('yz_gl_retry', '1')
-        localStorage.setItem('yz_backend', 'webgl')
-      } catch {}
-      location.reload()
-    }, 45000)
-  }
+  // (the WebGPU insurance is armed after renderer.init(), below, once the
+  // LIVE backend is known rather than the requested one)
 
   const renderer = new THREE.WebGPURenderer({
     canvas,
@@ -155,6 +138,43 @@ export const initCity = async () => {
     forceWebGL: quality.forceWebGL,
   })
   await renderer.init()
+
+  // THE WEBGPU INSURANCE. A backend can initialise, compile, and still never
+  // present a frame (a real iPhone 12 did exactly that) — no error, no
+  // rejection, just a veil that never lifts. If a WebGPU boot has not reached
+  // scene-live inside the window, the page reloads ONCE pinned to WebGL2 and
+  // the pin is remembered, so the next visit skips the dead end entirely.
+  //
+  // ARMED ONLY IF WEBGPU ACTUALLY TOOK, which is the fix. WebGPURenderer falls
+  // back to WebGL2 by itself, and on that path there is nothing to rescue —
+  // this used to be armed on `!forceWebGL`, which is a statement about what
+  // was ASKED for, not what happened. In an in-app browser (X/Twitter,
+  // Instagram, Facebook) WebGPU is absent, so the fallback is exactly where
+  // every one of those devices lands: a slow first load there tripped a reload
+  // it could never benefit from, and paid the whole download again.
+  //
+  // The retry also fails CLOSED now. If storage is unavailable — which is
+  // ordinary inside an in-app browser — the old code could not remember it had
+  // already tried, so it reloaded every 45 s forever. No memory, no retry.
+  const onWebGPU = renderer.backend?.isWebGPUBackend === true
+    || /webgpu/i.test(renderer.backend?.constructor?.name || '')
+  if (onWebGPU) {
+    setTimeout(() => {
+      const html = document.documentElement.classList
+      if (html.contains('scene-live') || html.contains('scene-failed')) return
+      let tried = true // no storage means no second chance, not an endless one
+      try {
+        tried = !!sessionStorage.getItem('yz_gl_retry')
+        if (!tried) {
+          sessionStorage.setItem('yz_gl_retry', '1')
+          localStorage.setItem('yz_backend', 'webgl')
+        }
+      } catch {
+        tried = true
+      }
+      if (!tried) location.reload()
+    }, 45000)
+  }
   renderer.setPixelRatio(quality.dpr())
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
