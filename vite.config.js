@@ -2,12 +2,29 @@ import { copyFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 
-// Each pod on usectl serves exactly ONE scene at its domain root, so the
-// scene's page is duplicated as index.html in the build output — the
-// canonical per-scene filename keeps working alongside it. The dev server
-// mirrors that: bare `/` rewrites to the scene, so localhost behaves like
-// the deployed pod instead of 404ing at the root.
-function sceneAsIndex(page = 'yoozap_scene_1.html') {
+// The scenes, by the number that names them. Every page is built every time —
+// they share one bundle, so carrying the other costs a few kB of HTML — but
+// only one of them becomes the root.
+const SCENES = {
+  1: 'yoozap_scene_1.html',
+  2: 'yoozap_scene_2.html',
+}
+
+// Each pod on usectl serves exactly ONE scene at its domain root, so SCENE
+// picks which: `SCENE=2 npm run build` puts scene 2 at /. It defaults to 1,
+// the scene that shipped first, so an unset environment builds what it
+// always built. The chosen page is duplicated as index.html in the build
+// output — the canonical per-scene filename keeps working alongside it. The
+// dev server mirrors that: bare `/` rewrites to the same page, so localhost
+// behaves like the deployed pod instead of 404ing at the root.
+function sceneAsIndex(scene = process.env.SCENE ?? '1') {
+  const page = SCENES[scene]
+  if (!page) {
+    throw new Error(
+      `SCENE=${scene} is not a scene — expected one of ${Object.keys(SCENES).join(', ')}`,
+    )
+  }
+
   return {
     name: 'scene-as-index',
     closeBundle: () =>
@@ -57,8 +74,13 @@ export default defineConfig({
   plugins: [dracoDecoderPath(), sceneAsIndex()],
   build: {
     rollupOptions: {
-      // The page is not index.html, so name it explicitly or vite finds nothing.
-      input: { scene1: resolve(import.meta.dirname, 'yoozap_scene_1.html') },
+      // No page is index.html, so name them explicitly or vite finds nothing.
+      input: Object.fromEntries(
+        Object.entries(SCENES).map(([n, page]) => [
+          `scene${n}`,
+          resolve(import.meta.dirname, page),
+        ]),
+      ),
     },
   },
 })

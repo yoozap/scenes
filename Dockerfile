@@ -1,5 +1,8 @@
 # Build the Vite bundle, then serve the static output with nginx.
+# One pod, one scene: --build-arg SCENE=2 serves scene 2 at the pod's root.
 FROM node:22-alpine AS build
+ARG SCENE=1
+ENV SCENE=$SCENE
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
